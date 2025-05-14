@@ -15,14 +15,15 @@ from scipy.signal import argrelmax, argrelmin, argrelextrema
 import sklearn
 from sklearn import preprocessing
 from scipy.interpolate import splrep, splev
-from fiducialPointsDetection import fiducialPointsDetection as FPD
-import morphologicalFeatureExtraction as MFE
+from FiducialPointsDetector import FiducialPointsDetector as FPD
+from MorphologicalFeatureExtractor import MorphologicalFeatureExtractor as MFE
+#from morphologicalFeatureExtractor import MorphologicalFeatureExtractor
 from pathlib import Path
 
 
 
-dataDir = r"D:\PPGFilteringProject\in-vivo-data\dataArray\finger\array"
-outDirFeatures = r"D:\PPGFilteringProject\extractedFeatures"
+dataDir = r"D:\PPGFilteringProject\acquisition_test\acquisition_test"
+mainDirFeatures = r"D:/PPGFilteringProject/extractedFeatures/IR"
 dataPaths = glob(os.path.join(dataDir,"*PPG_IR*"))
 SAMPLE_RATE = 2000 #Hz
 
@@ -30,8 +31,8 @@ SAMPLE_RATE = 2000 #Hz
 SP_MIN = 0.08*SAMPLE_RATE
 SP_MAX = 0.49*SAMPLE_RATE
 #physiological parameters
-HR_MIN = 50 #bpm
-HR_MAX = 100 #bpm
+HR_MIN = 40 #bpm
+HR_MAX = 140 #bpm
 # min and max pulse duration 
 PWD_MIN = round((60/HR_MAX)*SAMPLE_RATE) #samples
 PWD_MAX = round((60/HR_MIN)*SAMPLE_RATE)
@@ -40,10 +41,12 @@ USE_FILTER = True
 REMOVE_DC = False
 NORMALISE = False
 #filter parameters
-CUT_OFF_LOW = 0.05
+CUT_OFF_LOW = 0.1
 CUT_OFF_HIGH = 20
 ORDER = 2
 DEBUGGER_PLOTS = True
+outDir = os.path.join(mainDirFeatures,f"butter-{CUT_OFF_LOW}-{CUT_OFF_HIGH}_order{ORDER}")
+os.makedirs(outDir,exist_ok=True)
 
 def butter_bandpass(data,fs, cutoff_low=0.05, cutoff_high=10, order=2):        
     nyq = 0.5 * fs
@@ -75,6 +78,8 @@ def pulse_segmentation(signal, waveOnset_list, peaks_list):
                     elif waveOnset_list[idx_min] > peaks_list[idx_min]:
                         amplitude = signal[peaks_list[idx_min+1]]- signal[waveOnset_list[idx_min]]
                         amplitudes.append(amplitude) 
+                else:
+                    print(f"skip len")
 
     segmentedPulses = pd.DataFrame({
     'pulse': pulses,
@@ -105,9 +110,14 @@ for path in dataPaths:
     if NORMALISE:
         pleth = sklearn.preprocessing.minmax_scale(pleth,(-1,1))
     
+    # Create detector instance
+    # FPD = fiducialPointsDetection(signal=pleth, time=time, fs=SAMPLE_RATE, df_cutoff_low=0.5, df_cutoff_high=3, df_order=1)
+    # # Detect systolic peaks and valleys
+    # sysPeaks = FPD.detect_systolic_peaks()
+    # diastValleys = FPD.detect_valleys(sysPeaks)
     # finds systolic and diastolic peaks for pulse segmentation
-    sysPeaks = FPD.sysDet(pleth,time,SAMPLE_RATE,cutoff_low=0.5, cutoff_high=3, order=1)
-    diastValleys = FPD.valDet(pleth,time,sysPeaks)
+    sysPeaks = FPD.detect_systolic_peaks(pleth,time,SAMPLE_RATE)#cutoff_low=0.5, cutoff_high=3, order=1)
+    diastValleys = FPD.detect_valleys(pleth,time,sysPeaks)
     if DEBUGGER_PLOTS:
         plt.figure()
         plt.title(f"{filename}")
@@ -123,11 +133,6 @@ for path in dataPaths:
     trend = splev(time, tck)
     # remove trend from signal 
     detrended_pleth = pleth - trend
-    # HRV features extraction
-    # hrv_features = HRVE.HRVFeatureExtractor(detrended_pleth,sysPoints,SAMPLE_RATE)
-    # hrv_features = pd.DataFrame(hrv_features)
-    # hrv_features.insert(0, "filename", filename)
-    # hrv_features.to_excel(os.path.join(outDirFeatures,f"{filename}_hrv.xlsx"),index=False)
     
     # pulse segmentation and features extraction on each beat 
     segmentedPulsesDict = pulse_segmentation(detrended_pleth,waveOnsets,sysPoints)
@@ -136,16 +141,19 @@ for path in dataPaths:
     for pulseindex in range(len(segmentedPulses)):
         pulse = segmentedPulsesDict["pulse"].at[pulseindex]
         sysPosition = segmentedPulsesDict["peak_pos"].at[pulseindex]
+        if sysPosition == 0:
+            #skip this PPG beat
+            continue
         timePulse = np.arange(0, len(pulse)) / SAMPLE_RATE
         sysTime = timePulse[sysPosition]
-        dicNotch, dicNotch_time = FPD.dicNotchDetect(np.array(pulse), timePulse, sysTime, SAMPLE_RATE,plot=DEBUGGER_PLOTS)
+        dicNotch, dicNotch_time = FPD.find_dicrotic_notch(np.array(pulse), timePulse, sysTime)
 
-        # perform feature extraction from PPG pulse
+        #perform feature extraction from PPG pulse
         featuresDict = MFE.extractRawPulseFeatures(pulse, timePulse, sysPosition, dicNotch, SAMPLE_RATE, featuresDict, plot=DEBUGGER_PLOTS)
-        featuresDict = MFE.extractFirstDerivativePulseFeatures(pulse, timePulse, sysPosition, dicNotch, SAMPLE_RATE, featuresDict, plot=False)
-        featuresDict = MFE.extractSecondDerivativePulseFeatures(pulse, timePulse, sysPosition, dicNotch, SAMPLE_RATE, featuresDict, plot=False)
+        featuresDict = MFE.extractFirstDerivativePulseFeatures(pulse, timePulse, sysPosition, dicNotch, SAMPLE_RATE, featuresDict, plot=DEBUGGER_PLOTS)
+        featuresDict = MFE.extractSecondDerivativePulseFeatures(pulse, timePulse, sysPosition, dicNotch, SAMPLE_RATE, featuresDict, plot=DEBUGGER_PLOTS)
         
     featuresPerAcquisition = pd.DataFrame(featuresDict)
     featuresPerAcquisition.insert(0, "filename", filename)
-    featuresPerAcquisition.to_excel(os.path.join(outDirFeatures,outName),index=False)
+    featuresPerAcquisition.to_excel(os.path.join(outDir,outName),index=False)
     

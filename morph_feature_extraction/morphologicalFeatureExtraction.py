@@ -29,16 +29,18 @@ def find_nearest(array, value):
     return idx
 
 def findDiastolicPeak(time_win, signal_win, start_index):
+    if len(signal_win) == 0:
+        print("error")
     if np.max(signal_win) > signal_win[0]:
         maxIndex = np.argmax(signal_win)
         diastolicPeakIndex = start_index + maxIndex
     else:
-        peaks,_ = find_peaks(signal_win,distance=10)
+        peaks,_ = find_peaks(signal_win)
         if len(peaks)>0:
             diastolicPeakIndex = peaks[0] + start_index
         else:
             dfI = np.gradient(signal_win, time_win)
-            maxIndex = np.where(dfI==np.max(dfI))[0]
+            maxIndex = np.where(dfI==np.max(dfI))[0][0]
             diastolicPeakIndex = start_index + maxIndex
     
     return diastolicPeakIndex
@@ -67,12 +69,19 @@ def extractRawPulseFeatures(single_waveform, time,  sysPeakInd, dicNotchInd, sam
         featureDict = updateFeatureDict(featureDict, "dn_ampl", dicNotchAmplitude)
 
     if np.isnan(dicNotchInd):
-        win = single_waveform[sysPeakInd:int(len(single_waveform)*0.9)]
-        time_win = time[sysPeakInd:int(len(single_waveform)*0.9)]
+        win = single_waveform[sysPeakInd:int(len(single_waveform)*0.7)]
+        time_win = time[sysPeakInd:int(len(single_waveform)*0.7)]
+        if len(win)==0:
+            win = single_waveform[sysPeakInd:]
+            time_win = time[sysPeakInd:]
+        
         diastolicPeakIndex = findDiastolicPeak(time_win,win,sysPeakInd)
     else:
-        win = single_waveform[dicNotchInd:int(len(single_waveform)*0.9)]
-        time_win = time[dicNotchInd:int(len(single_waveform)*0.9)]
+        win = single_waveform[dicNotchInd:int(len(single_waveform)*0.7)]
+        time_win = time[dicNotchInd:int(len(single_waveform)*0.7)]
+        if len(win)==0:
+            win = single_waveform[dicNotchInd:]
+            time_win = time[dicNotchInd:]
         # find abs max after dicNotch
         diastolicPeakIndex = findDiastolicPeak(time_win,win,dicNotchInd)
 
@@ -96,6 +105,7 @@ def extractRawPulseFeatures(single_waveform, time,  sysPeakInd, dicNotchInd, sam
     featureDict = updateFeatureDict(featureDict, "ΔTsysdia", ΔT)
         
     # area from sys to diastolic rise
+
     xsw = time[np.where(time==systolicPeakTime)[0][0]:np.where(time==diastolicPeakTime)[0][0]]
     ysw = single_waveform[np.where(time==systolicPeakTime)[0][0]:np.where(time==diastolicPeakTime)[0][0]]
     areaSystoDiastPeak = np.trapz(ysw, x=xsw)

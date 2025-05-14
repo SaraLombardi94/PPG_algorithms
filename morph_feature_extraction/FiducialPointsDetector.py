@@ -427,56 +427,59 @@ from scipy.signal import find_peaks
 import sklearn
 import matplotlib.pyplot as plt
 
-class fiducialPointsDetection:
-    def __init__(self, signal, time, fs, df_cutoff_low=0.5, df_cutoff_high=3.0, df_order=2, max_bpm=140):
-        self.signal = signal
-        self.time = time
-        self.fs = fs
-        self.cutoff_low = df_cutoff_low
-        self.cutoff_high = df_cutoff_high
-        self.order = df_order
-        self.max_bpm = max_bpm
+d_cutoff_low = 0.5
+d_cutoff_high = 3
+d_order = 1
+max_bpm = 140
 
-    def detect_systolic_peaks(self):
+class FiducialPointsDetector:
+    def __init__(self):
+        pass
+    
+    @classmethod
+    def detect_systolic_peaks(self, signal, time, fs):
         overlap = 0.5
-        window_size = int(5 * self.fs)
+        window_size = int(5 * fs)
         step_size = int(window_size * (1 - overlap))
         locs = []
 
-        if len(self.signal) > window_size:
-            for start in range(0, len(self.signal) - window_size, step_size):
-                window = self.signal[start:start + window_size]
-                peaks, _ = self._find_systolic_in_window(window)
+        if len(signal) > window_size:
+            for start in range(0, len(signal) - window_size, step_size):
+                window = signal[start:start + window_size]
+                peaks, _ = self._find_systolic_in_window(window,fs)
                 locs.extend(peaks + start)
 
-            window = self.signal[-window_size:]
-            peaks, _ = self._find_systolic_in_window(window)
-            locs.extend(peaks + len(self.signal) - window_size)
+            window = signal[-window_size:]
+            peaks, _ = self._find_systolic_in_window(window,fs)
+            locs.extend(peaks + len(signal) - window_size)
         else:
-            peaks, _ = self._find_systolic_in_window(self.signal)
+            peaks, _ = self._find_systolic_in_window(window,fs)
             locs = peaks
 
-        locs = self._remove_filter_lag(np.array(locs))
+        locs = self._remove_filter_lag(signal, fs, np.array(locs))
         locs = np.unique(locs)
         sys = np.zeros((len(locs), 3))
         sys[:, 0] = locs
-        sys[:, 1] = self.time[locs]
-        sys[:, 2] = self.signal[locs]
+        sys[:, 1] = time[locs]
+        sys[:, 2] = signal[locs]
         return sys
-
-    def _butter_bandpass(self, data):
-        nyq = 0.5 * self.fs
-        b, a = signal.butter(self.order, [self.cutoff_low / nyq, self.cutoff_high / nyq], btype='bandpass')
+    
+    @classmethod
+    def _butter_bandpass(self, data, fs):
+        nyq = 0.5 * fs
+        b, a = signal.butter(d_order, [d_cutoff_low / nyq, d_cutoff_high / nyq], btype='bandpass')
         return signal.filtfilt(b, a, data)
-
-    def _find_systolic_in_window(self, signal_window):
-        filtered = self._butter_bandpass(signal_window)
+    
+    @classmethod
+    def _find_systolic_in_window(self, signal_window, fs):
+        filtered = self._butter_bandpass(signal_window, fs)
         norm = sklearn.preprocessing.minmax_scale(filtered, (-1, 1))
-        distance = int(self.fs * 60 / self.max_bpm)
+        distance = int(fs * 60 / max_bpm)
         peaks, _ = signal.find_peaks(norm, distance=distance, height=0)
         candidate_peaks, rejected_peaks = self._refine_peaks(norm, peaks)
         return candidate_peaks, rejected_peaks
-
+    
+    @classmethod
     def _refine_peaks(self, signal, peak_locs):
         candidate_peaks = []
         rejected_peaks = []
@@ -526,17 +529,18 @@ class fiducialPointsDetection:
             candidate_peaks.append(peak_locs[-1])
 
         return np.array(candidate_peaks), np.array(rejected_peaks)
-
-    def _remove_filter_lag(self, peak_locs):
-        epsilon = int(self.fs * (1 / (2 * (self.cutoff_high - self.cutoff_low))) / 2)
+    
+    @classmethod
+    def _remove_filter_lag(self, signal,fs, peak_locs):
+        epsilon = int(fs * (1 / (2 * (d_cutoff_high - d_cutoff_low))) / 2)
         corrected_locs = []
 
         for idx in peak_locs:
             if idx < epsilon:
-                local_win = self.signal[max(0, idx - epsilon // 8): idx + epsilon // 8 + 1]
+                local_win = signal[max(0, idx - epsilon // 8): idx + epsilon // 8 + 1]
                 start_idx = max(0, idx - epsilon // 8)
             else:
-                local_win = self.signal[idx - epsilon: idx + epsilon + 1]
+                local_win = signal[idx - epsilon: idx + epsilon + 1]
                 start_idx = idx - epsilon
 
             if len(local_win) == 0:
@@ -548,55 +552,45 @@ class fiducialPointsDetection:
             corrected_locs.append(corrected_idx)
 
         return np.unique(np.array(corrected_locs))
-
-    def detect_valleys(self, sys_peaks):
+    
+    @classmethod
+    def detect_valleys(self, signal, time, sys_peaks):
         N = sys_peaks.shape[0]
         val = np.zeros((N + 1, 3))
 
-        pre = self.time < sys_peaks[0, 1]
+        pre = time < sys_peaks[0, 1]
         if np.any(pre):
-            flux_pre = self.signal[pre]
-            time_pre = self.time[pre]
+            flux_pre = signal[pre]
+            time_pre = time[pre]
             idx = np.argmin(flux_pre)
             val[0] = [idx, time_pre[idx], flux_pre[idx]]
         else:
             val = val[1:]
 
         for i in range(N - 1):
-            mask = (self.time >= sys_peaks[i, 1]) & (self.time < sys_peaks[i + 1, 1])
+            mask = (time >= sys_peaks[i, 1]) & (time < sys_peaks[i + 1, 1])
             if not np.any(mask):
                 continue
-            flux_seg = self.signal[mask]
-            time_seg = self.time[mask]
+            flux_seg = signal[mask]
+            time_seg = time[mask]
             idx = np.argmin(flux_seg)
-            start = np.where(self.time == time_seg[0])[0][0]
+            start = np.where(time == time_seg[0])[0][0]
             val[i + 1] = [start + idx, time_seg[idx], flux_seg[idx]]
 
-        post = self.time > sys_peaks[-1, 1]
+        post = time > sys_peaks[-1, 1]
         if np.any(post):
-            flux_post = self.signal[post]
-            time_post = self.time[post]
+            flux_post = signal[post]
+            time_post = time[post]
             idx = np.argmin(flux_post)
-            start = np.where(self.time == time_post[0])[0][0]
+            start = np.where(time == time_post[0])[0][0]
             val[-1] = [start + idx, time_post[idx], flux_post[idx]]
         else:
             val = val[:-1]
 
         return val
 
-    def sysDet_check(self, sys, val):
-        N = sys.shape[0]
-        delta = sys[:, 0] - val[:-1, 0]
-        window = np.ones(N, dtype=bool)
-        frac = 0.49
-        for i in range(N):
-            if delta[i] > frac:
-                window[i] = False
-        sys = sys[window]
-        val_ok = val[:-1][window]
-        val = np.vstack((val_ok, val[-1]))
-        return sys, val
-
+    
+    @classmethod
     def find_dicrotic_notch(self, flux, time, sys_peak_time):
         dfI = np.gradient(flux, time)
         #dfI = np.convolve(dfI, np.ones(3)/3, mode='same')

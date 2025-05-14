@@ -1,0 +1,154 @@
+# This Python file uses the following encoding: utf-8
+import sys
+import os
+import tempfile
+from PySide6.QtWidgets import QApplication, QWidget, QGraphicsScene, QGraphicsProxyWidget
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from ui_form import Ui_Widget
+from PySide6.QtCore import QUrl
+from processData import DataProcessor
+
+class Widget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.ui = Ui_Widget()
+        self.ui.setupUi(self)
+        # Default parameters
+        self.default_fs = 60
+        self.default_function = "Exp"
+        self.use_filter = False
+        self.cutoff_high = None
+        self.cutoff_low = None
+        self.filter_order = None
+
+    def select_input_folder(self):
+        """Open a folder dialog and list valid signal files in the GUI."""
+        folder = QFileDialog.getExistingDirectory(self, "Select Directory")
+        if not folder:
+            QMessageBox.warning(self, "No Folder Selected", "Please select a valid folder.")
+            return
+        self.input_folder = folder
+        # get the list of file with valid format in the selected folder
+        self.logs = self.get_files_list(folder)
+        self.num_files = len(self.logs)
+        self.ui.console.addItem(f"Found {self.num_files} valid files in folder.")
+        self.ui.list_valid_files.clear()
+        for log in self.logs:
+            item = QListWidgetItem(log['name'])
+            self.ui.list_valid_files.addItem(item)
+
+    def get_files_list(self, folder):
+        """Return a list of dictionaries with valid input files in the folder."""
+        valid_ext = ('.CSV', '.NPY', '.NPZ')
+        file_list = []
+        for file_name in os.listdir(folder):
+            if file_name.upper().endswith(valid_ext):
+                file_path = os.path.join(folder, file_name)
+                file_list.append({'name': file_name, 'path': file_path})
+
+        return file_list
+
+    def select_output_folder(self):
+        """Open a folder dialog and set the output path in the GUI."""
+        folder = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+
+        if not folder:
+            QMessageBox.warning(self, "No Output Folder Selected", "Please select a valid output folder.")
+            return
+
+        self.outputFolder = folder
+        self.ui.output_path.setText(folder)
+        self.ui.console.addItem(f"Output folder set to: {folder}")
+
+    def update_parameters_from_ui(self):
+        """Update internal parameters from GUI inputs."""
+        # Sampling frequency
+        try:
+            self.default_fs = int(self.ui.fs_line_edit.text())
+        except ValueError:
+            self.default_fs = 60  # fallback
+            self.ui.console.addItem("Invalid sampling frequency, using default 60 Hz.")
+
+        # Fitting function
+        if self.ui.exp_fit_checked.isChecked():
+            self.fitting_type = "Exp"
+        elif self.ui.gauss_fit_checked.isChecked():
+            self.fitting_type = "Gaus"
+
+        # Filter info
+        self.use_filter = self.ui.use_filter_button.isChecked()
+        if self.use_filter:
+            try:
+                self.cutoff_low = float(self.ui.low_cutoff.text())
+                self.cutoff_high = float(self.ui.high_cutoff.text())
+                self.filter_order = int(self.ui.order_box.currentText())
+            except ValueError:
+                self.ui.console.addItem("Invalid filter parameters. Please check input fields.")
+                self.use_filter = False  # fallback
+
+    def process_file(self, item):
+        """Slot called when a file is double-clicked in the file list."""
+
+        # Ask for user confirmation
+        sample_name = item.text()
+        result = QMessageBox.question(
+            self,
+            "Run Processing",
+            f"Do you want to process the file: {sample_name}?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if result == QMessageBox.No:
+            return
+
+        # Update parameters from GUI
+        self.update_parameters_from_ui()
+        # Log that everything is ready
+        self.ui.console.clear()
+        self.ui.console.addItem(f"Ready to process {sample_name}")
+        self.ui.console.addItem(f"Sampling frequency: {self.default_fs} Hz")
+        self.ui.console.addItem(f"Fitting function: {self.fitting_type}")
+        if self.use_filter:
+            self.ui.console.addItem(f"Filter: ON ({self.cutoff_low}-{self.cutoff_high} Hz, order {self.filter_order})")
+        else:
+            self.ui.console.addItem("Filter: OFF")
+
+        # create istance of class processData
+        processor = DataProcessor(
+            filepath=os.path.join(self.input_folder,sample_name),
+            fs=self.default_fs,
+            fitting_type=self.fitting_type,
+            use_filter=self.use_filter,
+            cutoff_low=self.cutoff_low,
+            cutoff_high=self.cutoff_high,
+            filter_order=self.filter_order
+        )
+        figure = processor.process_signal()
+        self.display_plot(figure)
+
+    def display_plot(self, figure):
+        """Display a Plotly figure inside the QGraphicsView in the UI."""
+
+        # Create temporary HTML file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+        figure.write_html(temp_file.name)
+        temp_file.close()
+
+        # Create a QWebEngineView to load the HTML
+        web_view = QWebEngineView()
+        web_view.setUrl(QUrl.fromLocalFile(temp_file.name))
+
+        # Set up QGraphicsScene and add the web view as a proxy widget
+        scene = QGraphicsScene(self)
+        proxy = QGraphicsProxyWidget()
+        proxy.setWidget(web_view)
+        scene.addItem(proxy)
+
+        # Set scene to the UI's graphics view
+        self.ui.display_plot.setScene(scene)
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    widget = Widget()
+    widget.show()
+    sys.exit(app.exec())
