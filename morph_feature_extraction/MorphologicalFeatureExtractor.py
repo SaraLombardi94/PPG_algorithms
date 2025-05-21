@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Thu Jan 23 13:56:42 2025
-
 @author: adhk198
 """
 
@@ -41,8 +40,8 @@ class MorphologicalFeatureExtractor:
     
     @classmethod
     def findDiastolicPeak(self,time_win, signal_win, start_index):
-        if len(signal_win) == 0:
-            print("error")
+        if len(signal_win) < 10:
+           return None
         if np.max(signal_win) > signal_win[0]:
             maxIndex = np.argmax(signal_win)
             diastolicPeakIndex = start_index + maxIndex
@@ -54,7 +53,6 @@ class MorphologicalFeatureExtractor:
                 dfI = np.gradient(signal_win, time_win)
                 maxIndex = np.where(dfI==np.max(dfI))[0][0]
                 diastolicPeakIndex = start_index + maxIndex
-        
         return diastolicPeakIndex
         
     @classmethod
@@ -68,9 +66,9 @@ class MorphologicalFeatureExtractor:
         featureDict = self.updateFeatureDict(featureDict, "sys_ampl", systolicPeakAmplitude)
         
         # dicNotch time and amplitude
-        if np.isnan(dicNotchInd):
+        if dicNotchInd is None:
             dicNotchTime, dicNotchAmplitude = np.nan, np.nan
-            featureDict = self.add_nan_features(featureDict, ["t_dn", "dicNotchAmpl"])
+            featureDict = self.add_nan_features(featureDict, ["t_dn", "dn_ampl"])
         else: 
             # dicNotch time
             dicNotchTime = time[dicNotchInd]
@@ -80,47 +78,50 @@ class MorphologicalFeatureExtractor:
             dicNotchAmplitude = single_waveform[dicNotchInd]
             featureDict = self.updateFeatureDict(featureDict, "dn_ampl", dicNotchAmplitude)
     
-        if np.isnan(dicNotchInd):
-            win = single_waveform[sysPeakInd:int(len(single_waveform)*0.7)]
-            time_win = time[sysPeakInd:int(len(single_waveform)*0.7)]
+        if dicNotchInd is None:
+            win = single_waveform[sysPeakInd:int(len(single_waveform)*0.8)]
+            time_win = time[sysPeakInd:int(len(single_waveform)*0.8)]
             if len(win)==0:
                 win = single_waveform[sysPeakInd:]
                 time_win = time[sysPeakInd:]
             
             diastolicPeakIndex = self.findDiastolicPeak(time_win,win,sysPeakInd)
         else:
-            win = single_waveform[dicNotchInd:int(len(single_waveform)*0.7)]
-            time_win = time[dicNotchInd:int(len(single_waveform)*0.7)]
+            win = single_waveform[dicNotchInd:int(len(single_waveform)*0.8)]
+            time_win = time[dicNotchInd:int(len(single_waveform)*0.8)]
             if len(win)==0:
                 win = single_waveform[dicNotchInd:]
                 time_win = time[dicNotchInd:]
             # find abs max after dicNotch
             diastolicPeakIndex = self.findDiastolicPeak(time_win,win,dicNotchInd)
     
+        if diastolicPeakIndex is None:
+            self.add_nan_features(featureDict, ["t_dia", "dia_ampl","AI","RI","ΔTsysdia","area_sys_dia"])
+            diastolicPeakTime, diastolicPeakAmplitude, AI, RI, ΔT, areaSystoDiastPeak = np.nan,np.nan,np.nan,np.nan,np.nan,np.nan
+        else:
+                
+            diastolicPeakTime = time[diastolicPeakIndex]
+            featureDict = self.updateFeatureDict(featureDict, "t_dia", diastolicPeakTime)
+                
+            diastolicPeakAmplitude = single_waveform[diastolicPeakIndex]
+            featureDict = self.updateFeatureDict(featureDict, "dia_ampl", diastolicPeakAmplitude)
             
+            # augmentation index (AIx)
+            AI = 100*((systolicPeakAmplitude-diastolicPeakAmplitude)/systolicPeakAmplitude)
+            featureDict = self.updateFeatureDict(featureDict, "AI", AI)
+            # reflection index (RI)
+            RI = 100*(diastolicPeakAmplitude/systolicPeakAmplitude)
+            featureDict = self.updateFeatureDict(featureDict, "RI", RI)
             
-        diastolicPeakTime = time[diastolicPeakIndex]
-        featureDict = self.updateFeatureDict(featureDict, "t_dia", diastolicPeakTime)
-            
-        diastolicPeakAmplitude = single_waveform[diastolicPeakIndex]
-        featureDict = self.updateFeatureDict(featureDict, "dia_ampl", diastolicPeakAmplitude)
-        
-        # augmentation index (AIx)
-        AI = 100*((systolicPeakAmplitude-diastolicPeakAmplitude)/systolicPeakAmplitude)
-        featureDict = self.updateFeatureDict(featureDict, "AI", AI)
-        # reflection index (RI)
-        RI = 100*(diastolicPeakAmplitude/systolicPeakAmplitude)
-        featureDict = self.updateFeatureDict(featureDict, "RI", RI)
-        
-        # time from sys to dia
-        ΔT = diastolicPeakTime - systolicPeakTime 
-        featureDict = self.updateFeatureDict(featureDict, "ΔTsysdia", ΔT)
-            
-        # area from sys to diastolic rise
-        xsw = time[np.where(time==systolicPeakTime)[0][0]:np.where(time==diastolicPeakTime)[0][0]]
-        ysw = single_waveform[np.where(time==systolicPeakTime)[0][0]:np.where(time==diastolicPeakTime)[0][0]]
-        areaSystoDiastPeak = np.trapz(ysw, x=xsw)
-        featureDict = self.updateFeatureDict(featureDict, "area_sys_dia", areaSystoDiastPeak)
+            # time from sys to dia
+            ΔT = diastolicPeakTime - systolicPeakTime 
+            featureDict = self.updateFeatureDict(featureDict, "ΔTsysdia", ΔT)
+                
+            # area from sys to diastolic rise
+            xsw = time[np.where(time==systolicPeakTime)[0][0]:np.where(time==diastolicPeakTime)[0][0]]
+            ysw = single_waveform[np.where(time==systolicPeakTime)[0][0]:np.where(time==diastolicPeakTime)[0][0]]
+            areaSystoDiastPeak = np.trapz(ysw, x=xsw)
+            featureDict = self.updateFeatureDict(featureDict, "area_sys_dia", areaSystoDiastPeak)
         
         # pulse interval duration (from onset to onset)
         pulseDuration = time[-1]
@@ -255,7 +256,7 @@ class MorphologicalFeatureExtractor:
             ratioAswAdw = areaDw/areaSw
                 
             featureDict = self.updateFeatureDict(featureDict, "area_sys", areaSw)
-            featureDict = self.updateFeatureDict(featureDict, "area_dn", areaDw)
+            featureDict = self.updateFeatureDict(featureDict, "area_dia", areaDw)
             featureDict = self.updateFeatureDict(featureDict, "ratioAsys_Adn", ratioAswAdw)
         
         if plot:
@@ -279,6 +280,8 @@ class MorphologicalFeatureExtractor:
             # plt.scatter(time[index0_75],single_waveform[index0_75], color='saddlebrown', label='Width75%', marker="_")
             # plt.scatter(time[index1_75],single_waveform[index1_75], color='saddlebrown',marker="_")
             plt.legend(loc='upper left', bbox_to_anchor=(1.0, 1.0), fontsize="small")
+            plt.xlabel('Time')
+            plt.ylabel('Amplitude')
             plt.tight_layout()
             plt.show()
         return featureDict
@@ -307,23 +310,28 @@ class MorphologicalFeatureExtractor:
         
         t_u_v = v_peak_time - u_peak_time
         featureDict = self.updateFeatureDict(featureDict, "time_u_v",  t_u_v)
-        
-        # search w peak as abs maximum occurring after dicrotic notch
-        window_w_peak = derivative1[dicNotch:int(len(derivative1)*0.8)]
-        w_peak_idx = np.argmax(window_w_peak) + dicNotch
-        w_peak_time = time[w_peak_idx]
-        w_peak = derivative1[w_peak_idx]
-    
-        featureDict = self.updateFeatureDict(featureDict, "t_wPeak",  w_peak_time)
-        featureDict = self.updateFeatureDict(featureDict, "wPeak",  w_peak)
-        
-        
         t_u_pulse_ratio = u_peak_time/time[-1]
         t_v_pulse_ratio = v_peak_time/time[-1]
-        t_w_pulse_ratio = w_peak_time/time[-1]
         featureDict = self.updateFeatureDict(featureDict, "t_u_pulse",  t_u_pulse_ratio)
         featureDict = self.updateFeatureDict(featureDict, "t_v_pulse",  t_v_pulse_ratio)
-        featureDict = self.updateFeatureDict(featureDict, "t_w_pulse",  t_w_pulse_ratio)
+        
+        if dicNotch is None:
+            w_peak_time, w_peak, t_w_pulse_ratio = np.nan, np.nan, np.nan
+            featureDict = self.updateFeatureDict(featureDict, "t_wPeak",  w_peak_time)
+            featureDict = self.updateFeatureDict(featureDict, "wPeak",  w_peak)
+            featureDict = self.updateFeatureDict(featureDict, "t_w_pulse",  t_w_pulse_ratio)
+        else:
+            # search w peak as abs maximum occurring after dicrotic notch
+            window_w_peak = derivative1[dicNotch:int(len(derivative1)*0.8)]
+            w_peak_idx = np.argmax(window_w_peak) + dicNotch
+            w_peak_time = time[w_peak_idx]
+            w_peak = derivative1[w_peak_idx]
+        
+            featureDict = self.updateFeatureDict(featureDict, "t_wPeak",  w_peak_time)
+            featureDict = self.updateFeatureDict(featureDict, "wPeak",  w_peak)
+            t_w_pulse_ratio = w_peak_time/time[-1]
+            featureDict = self.updateFeatureDict(featureDict, "t_w_pulse",  t_w_pulse_ratio)
+        
     
         if plot:
             plt.figure()
@@ -369,20 +377,27 @@ class MorphologicalFeatureExtractor:
         ppg_bpoint = single_waveform[b_peak_idx]
         featureDict = self.updateFeatureDict(featureDict, "t_Bpoint",  b_peak_time)
         featureDict = self.updateFeatureDict(featureDict, "BPoint",  b_peak)
-        
+         
         
         # Search E as max point after systolic peak 
         e_window = derivative2[sysPosition:int(len(single_waveform)*0.9)]
-        e_peak_idx = np.argmax(e_window) + sysPosition
-        e_peak_time = time[e_peak_idx]
-        e_peak = derivative2[e_peak_idx]
-        ppg_epoint = single_waveform[e_peak_idx]
+        if len(e_window)==0:
+            e_peak_idx, e_peak_time, e_peak, ppg_epoint = np.nan,np.nan, np.nan, np.nan
+        else:
+            e_peak_idx = np.argmax(e_window) + sysPosition
+            e_peak_time = time[e_peak_idx]
+            e_peak = derivative2[e_peak_idx]
+            ppg_epoint = single_waveform[e_peak_idx]
+        
         featureDict = self.updateFeatureDict(featureDict, "t_Epoint",  e_peak_time)
         featureDict = self.updateFeatureDict(featureDict, "EPoint",  e_peak)
         featureDict = self.updateFeatureDict(featureDict,"PPGAmpl_Epoint", ppg_epoint)
         
-        # Search C as max point between systolic peak and E point
-        c_window = derivative2[b_peak_idx:e_peak_idx]
+        if not np.isnan(e_peak_idx):
+            # Search C as max point between systolic peak and E point
+            c_window = derivative2[b_peak_idx:e_peak_idx]
+        else:
+            c_window = derivative2[b_peak_idx:]
         idx,_ = find_peaks(c_window)
         if len(idx)>0:
             idx = idx + b_peak_idx
@@ -401,8 +416,9 @@ class MorphologicalFeatureExtractor:
             featureDict = self.updateFeatureDict(featureDict, "t_Cpoint",  c_peak_time)
             featureDict = self.updateFeatureDict(featureDict, "CPoint",  c_peak) 
             featureDict = self.updateFeatureDict(featureDict,"ratio_C-A", ratio_ca)
+                
         
-        if not np.isnan(c_peak_idx): 
+        if not np.isnan(c_peak_idx) and not np.isnan(e_peak_idx): 
             # Search D as min point between C point and E Point
             d_window = derivative2[c_peak_idx:e_peak_idx]
             neg_idx,_ = find_peaks(-d_window)
@@ -440,11 +456,15 @@ class MorphologicalFeatureExtractor:
         # PPG[B]/PPG[A]
         ratio_ppg_ba = ppg_bpoint/ppg_apoint
         featureDict = self.updateFeatureDict(featureDict,"ratio_PPG[B]_PPG[A]", ratio_ppg_ba)
-        # e/a
-        ratio_ea = e_peak/a_peak
+        if np.isnan(e_peak):
+            ratio_ea,ratio_ppg_ea = np.nan, np.nan
+        else:  
+            # e/a
+            ratio_ea = e_peak/a_peak 
+            # PPG[E]/PPG[A]
+            ratio_ppg_ea = ppg_epoint/ppg_apoint
+        
         featureDict = self.updateFeatureDict(featureDict,"ratio_E-A", ratio_ea)
-        # PPG[E]/PPG[A]
-        ratio_ppg_ea = ppg_epoint/ppg_apoint
         featureDict = self.updateFeatureDict(featureDict,"ratio_PPG[E]_PPG[A]", ratio_ppg_ea)
         #
         if plot:
