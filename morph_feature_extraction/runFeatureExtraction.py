@@ -22,8 +22,8 @@ from pathlib import Path
 
 
 
-dataDir = r"D:\ArterialStiffnessProjectSara\dataset\in-vitro-data\dati"
-mainDirFeatures = r"D:\ArterialStiffnessProjectSara\dataset\in-vitro-data\features"
+dataDir = r"D:\PPGFilteringProject\in-vivo-data\dataArray\finger\array"
+mainDirFeatures = r"D:\PPGFilteringProject\extractedFeatures\IR"
 dataPaths = glob(os.path.join(dataDir,"*PPG_IR*"))
 SAMPLE_RATE = 2000 #Hz
 
@@ -41,9 +41,9 @@ USE_FILTER = True
 REMOVE_DC = False
 NORMALISE = False
 #filter parameters
-CUT_OFF_LOW = 0.05
-CUT_OFF_HIGH = 10
-ORDER = 2
+CUT_OFF_LOW = 0.5
+CUT_OFF_HIGH = 20
+ORDER = 6
 DEBUGGER_PLOTS = False
 
 if USE_FILTER == False:
@@ -196,6 +196,10 @@ for path in dataPaths:
         
         sysTime = timePulse[sysPosition]
         dicNotch, dicNotch_time = FPD.find_dicrotic_notch(np.array(detrended_pulse), timePulse, sysTime)
+        if dicNotch is None:
+            print(f"skip pulse {pulse_index}")
+            #skip this PPG beat
+            continue
         dic_notches[i,0] = dicNotch
         dic_notches[i,1] = dicNotch_time + t_start
         dic_notches[i,2] = pulse[dicNotch]
@@ -205,14 +209,14 @@ for path in dataPaths:
         featuresDict = MFE.extractSecondDerivativePulseFeatures(pulse, timePulse, sysPosition, dicNotch, SAMPLE_RATE, featuresDict, plot=DEBUGGER_PLOTS)
         featuresDict["pulse_index"].append(pulse_index)
     
-    #if DEBUGGER_PLOTS:
-    plt.figure()
-    plt.title(f"{filename}")
-    plt.plot(time, pleth)
-    plt.scatter(sysPeaks[:,1],pleth[sysPeaks[:,0].astype(int)],color="red", marker="*")
-    plt.scatter(diastValleys[:,1],pleth[diastValleys[:,0].astype(int)],color="green")
-    plt.scatter(dic_notches[:,1],dic_notches[:,2],color="cyan", marker="^")
-    plt.show()
+    # #if DEBUGGER_PLOTS:
+    # plt.figure()
+    # plt.title(f"{filename}")
+    # plt.plot(time, pleth)
+    # plt.scatter(sysPeaks[:,1],pleth[sysPeaks[:,0].astype(int)],color="red", marker="*")
+    # plt.scatter(diastValleys[:,1],pleth[diastValleys[:,0].astype(int)],color="green")
+    # plt.scatter(dic_notches[:,1],dic_notches[:,2],color="cyan", marker="^")
+    # plt.show()
         
     featuresPerAcquisition = pd.DataFrame(featuresDict)
     featuresPerAcquisition.insert(0, "filename", filename)
